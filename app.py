@@ -39,9 +39,32 @@ def normalize_str_series(s: pd.Series) -> pd.Series:
     return s.str.upper()
 
 def to_excel_date_series(s: pd.Series) -> pd.Series:
-    """Excel serial number → pandas datetime.date (ořez na den). Ignoruje NaN."""
-    # Excel origin 1899-12-30; pandas zvládne i float serial (část dne)
-    dt = pd.to_datetime(s, unit="D", origin="1899-12-30", errors="coerce")
+    """
+    Převede různé reprezentace data na pandas datetime.date (ořez na den).
+    - Pokud je vstup už datetime-like, jen ořízne na den.
+    - Pokud je numerický, bere se jako Excel-serial (dny od 1899-12-30).
+    - Jinak zkusí texty -> datetime; co zůstane NaT, doparsuje jako Excel-serial z číselných textů.
+    """
+    s_in = s.copy()
+
+    # 1) už datetime?
+    if pd.api.types.is_datetime64_any_dtype(s_in):
+        dt = pd.to_datetime(s_in, errors="coerce")
+
+    # 2) čistě numerický vstup -> Excel serial
+    elif pd.api.types.is_numeric_dtype(s_in):
+        dt = pd.to_datetime(s_in, unit="D", origin="1899-12-30", errors="coerce")
+
+    else:
+        # 3) texty: nejdřív standardní parsování
+        dt = pd.to_datetime(s_in, errors="coerce")
+        # Neúspěšné položky doparsuj jako Excel-serial z číselných řetězců
+        mask_na = dt.isna()
+        if mask_na.any():
+            s_num = pd.to_numeric(s_in.where(mask_na), errors="coerce")
+            dt_excel = pd.to_datetime(s_num, unit="D", origin="1899-12-30", errors="coerce")
+            dt = dt.where(~mask_na, dt_excel)
+
     return dt.dt.floor("D").dt.date
 
 @st.cache_data(show_spinner=False)
